@@ -50,6 +50,8 @@ lp_dhd, lp_idxs = tracked_directed_hd_distances(trafo_lbl, trafo_pred, euclidean
 fig, axes = plt.subplots(ncols=3)
 axes = axes.flat
 
+fig.suptitle(f'Hausdorff Metric: {hdm:.2f}')
+
 ax = axes[0]
 ax.set_title('Prediction')
 ax.imshow(test_pred)
