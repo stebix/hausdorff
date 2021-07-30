@@ -1,5 +1,7 @@
 import numpy as np
 
+from typing import Tuple, Dict, List, Optional
+
 """
 Various utility functions for the `hausdorff` package.
 """
@@ -31,33 +33,12 @@ def is_binary(arr: np.array) -> bool:
         return False
 
 
-def is_idshape(X: np.ndarray, Y: np.ndarray) -> bool:
-    if X.shape == Y.shape:
+def idshape(*arrays: np.ndarray) -> bool:
+    const_shape = arrays[0].shape
+    for arr in arrays:
+        if arr.shape != const_shape:
+            return False
+    else:
         return True
-    else:
-        return False
 
 
-
-def prepare_segmentation(pred: np.ndarray,
-                         label: np.ndarray,
-                         exclude_intersection: bool = False
-                         ) -> Tuple[np.ndarray]:
-    """
-    Transform a binary semantic segmentation pair < prediction, label> towards
-    two coordinate vector arrays.
-    """
-    assert is_binary(pred), 'Prediction volume must be binary'
-    assert is_binary(label), 'Label volume must be binary'
-    assert is_idshape(pred, label), 'Mismatching prediction and label volume shape'
-    # recast as boolean arrays
-    pred = np.isclose(pred, 1.0)
-    label = np.isclose(label, 1.0)
-    label_coords = np.argwhere(label)
-    if exclude_intersection:
-        xor_mask = np.logical_xor(pred, label)
-        pred_coords = np.argwhere(xor_mask)
-    else:
-        pred_coords = np.argwhere(pred)
-
-    return (pred_coords, label_coords)
