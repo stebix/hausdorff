@@ -127,7 +127,7 @@ class _BaseHausdorff:
     """
     Interface to configure and then execute the Hausdorff distance computation.
     """
-    repr_keys = set(('symmetric', 'reduction', 'remove_intersection',
+    repr_keys = set(('reduction', 'remove_intersection',
                      'metric', 'postprocess', 'parallelized',
                      'n_workers'))
     def __init__(self,
@@ -369,8 +369,3 @@ class ArgtrackedHausdorff(_BaseHausdorff):
                 for dist_perm, idx_perm in zip(result_permutations, indices_permutations)
             )
             return unreduced_result
-
-
-if __name__ == '__main__':
-    hd = Hausdorff(symmetric=True)
-    print(hd)
