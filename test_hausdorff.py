@@ -1,146 +1,95 @@
 import numpy as np
+import pytest
 import matplotlib.pyplot as plt
 
-import pytest
-
-from hausdorff import *
-from metrics import *
+from hausdorff import Hausdorff, DirectedHausdorff
+from volumehelpers import create_overlapping_cubes, create_simple_testvolume
 
 
-"""
-pointset_1 = np.random.default_rng().normal(0, 1, size=(1000, 3))
-pointset_2 = np.random.default_rng().normal(0, 1, size=(1000, 3))
+class Test_DirectedHausdorff:
 
-
-pdist = pairwise_distances(pointset_1, pointset_2, euclidean)
-hdist = hausdorff_metric(pointset_1, pointset_2, euclidean)
-
-hd95 = hausdorff_percentile_distance(pointset_1, pointset_2, euclidean, 0.95)
-
-# print(np.max(hdist))
-print(hdist)
-print(f'HD95: {hd95}')
-"""
-
-
-
-class Test_hd_metric:
-
-    def test_diagonal_2D(self):
-        shape = (75, 75)
-        Xraw = np.zeros(shape, dtype=np.int32)
-        Yraw = np.zeros(shape, dtype=np.int32)
-        Xraw[0, 0] = 1
-        Yraw[-1, -1] = 1
-        expected_result = 74 * np.sqrt(2)
-        # convert to point coordinate arrays
-        X = np.argwhere(Xraw)
-        Y = np.argwhere(Yraw)
-
-        result = hd_metric(X, Y, metric=euclidean)
-        assert np.isclose(result, expected_result), 'Result HD dist mismatch'
-        
-    def test_diagonal_3D(self):
+    @pytest.mark.parametrize('parallelized,n_workers', [(False, 0), (True, 2), (True, 3)])
+    @pytest.mark.parametrize('metric,postprocess', [('euclidean', 'none'), ('squared_euclidean', 'sqrt')])
+    def test_euclidean_distance_simple(self, metric, postprocess, parallelized, n_workers):
+        hausdorff = DirectedHausdorff(
+            reduction='canonical', remove_intersection=False,
+            metric=metric, postprocess=postprocess,
+            argtracked=False, parallelized=parallelized, n_workers=n_workers
+        )
         shape = (50, 50, 50)
-        Xraw = np.zeros(shape, dtype=np.int32)
-        Yraw = np.zeros(shape, dtype=np.int32)
-        Xraw[0, 0, 0] = 1
-        Yraw[-1, -1, -1] = 1
-        expected_result = np.sqrt(3) * 49
-        # convert to point coordinate arrays
-        X = np.argwhere(Xraw)
-        Y = np.argwhere(Yraw)
-
-        result = hd_metric(X, Y, metric=euclidean)
-        assert np.isclose(result, expected_result), 'Result HD dist mismatch'
+        pos_a = (25, 10, 10)
+        pos_b = (25, 40, 40)
+        va, vb = create_simple_testvolume(shape, pos_a, pos_b)
+        # recast as numpy.ndarray
+        pos_a, pos_b = (np.array(pos) for pos in (pos_a, pos_b))
+        difference = pos_a - pos_b
+        expected_distance = np.linalg.norm(difference)
+        result = hausdorff.compute(va, vb)
+        assert np.isclose(expected_distance, result)
 
 
-class Test_avg_hd_dist:
+class Test_Hausdorff:
 
-    def test_diagonal_2D(self):
-        shape = (75, 75)
-        Xraw = np.zeros(shape, dtype=np.int32)
-        Yraw = np.zeros(shape, dtype=np.int32)
-        Xraw[0, 0] = 1
-        Yraw[-1, -1] = 1
-        # expected_result = 74 * np.sqrt(2)
-        # convert to point coordinate arrays
-        X = np.argwhere(Xraw)
-        Y = np.argwhere(Yraw)
-
-        result = avg_hd_dist(X, Y, metric=euclidean)
-        print(f'AVG_HD = {result:.5f}')
-        # assert np.isclose(result, expected_result), 'Result HD dist mismatch'
+    @pytest.mark.parametrize('remove_intersection', [True, False])
+    def test_with_shifted_cubes(self, remove_intersection):
+        hausdorff = Hausdorff(
+            reduction='average', remove_intersection=remove_intersection,
+            metric='euclidean', postprocess='none',
+            argtracked=False, parallelized=False, n_workers=0
+        )
+        va, vb = create_overlapping_cubes()
+        result = hausdorff.compute(va, vb)
+        print(result)
 
 
+def test_plot_overlap():
+    va, vb = create_overlapping_cubes()
+    axis_0_idx = 30
+    intersection = np.logical_and(va, vb)
+    volsum = va + vb
 
-
-
-
-
-
-
-
-def integ():
-    test_pred = np.zeros((10, 10), dtype=np.int32)
-    test_lbl = np.zeros((10, 10), dtype=np.int32)
-
-    # prediction positive class coordinates
-    pred_pos_coords = [(3,3), (4, 3), (3, 4), (4, 4)]
-    for poscord in pred_pos_coords:
-        test_pred[poscord] = 1
-
-    # label positive class coordinates
-    label_pos_coords = [(4, 4), (5, 4),(4, 5), (5, 5), (6, 6)]
-    for poscord in label_pos_coords:
-        test_lbl[poscord] = 1
-
-    trafo_pred, trafo_lbl = prepare_segmentation(test_pred, test_lbl)
-
-    hd = seg_hausdorff_distances(test_pred, test_lbl, metric=euclidean)
-    print(hd)
-
-    hdm = hausdorff_metric(trafo_pred, trafo_lbl, euclidean)
-    print(f'Hausdorff Metric: {hdm:.2f}')
-
-    pl_dhd, pl_idxs = tracked_directed_hd_distances(trafo_pred, trafo_lbl, euclidean)
-    lp_dhd, lp_idxs = tracked_directed_hd_distances(trafo_lbl, trafo_pred, euclidean)
-
-
-    fig, axes = plt.subplots(ncols=3)
+    fig, axes = plt.subplots(ncols=2, nrows=2)
     axes = axes.flat
-
-    fig.suptitle(f'Hausdorff Metric: {hdm:.2f}')
-
+    
     ax = axes[0]
-    ax.set_title('Prediction')
-    ax.imshow(test_pred)
-
+    ax.set_title('cube a')
+    ax.imshow(va[axis_0_idx, ...])
 
     ax = axes[1]
-    ax.set_title('Label')
-    ax.imshow(test_lbl)
+    ax.set_title('cube b')
+    ax.imshow(vb[axis_0_idx, ...])
 
     ax = axes[2]
-    ax.set_title('Overlay')
-    cumul = test_pred + test_lbl
-    img = ax.imshow(cumul, cmap='Set1')
+    ax.set_title('intersection')
+    ax.imshow(intersection[axis_0_idx, ...])
 
-
-    for pt, idx in zip(trafo_pred, pl_idxs):
-        start = tuple(pt)
-        stop = tuple(trafo_lbl[idx])
-        ax.annotate('', xy=stop, xytext=start,
-                    arrowprops=dict(arrowstyle='->', color='g'))
-
-
-    for pt, idx in zip(trafo_lbl, lp_idxs):
-        start = tuple(pt)
-        stop = tuple(trafo_pred[idx])
-        ax.annotate('', xy=stop, xytext=start,
-                    arrowprops=dict(arrowstyle='->', color='r'),
-                    )
-
-
+    ax = axes[3]
+    ax.set_title('sum')
+    ax.imshow(volsum[axis_0_idx, ...])
 
     plt.show()
+
+
+def test():
+    hausdorff = Hausdorff(
+        reduction='canonical', remove_intersection=False,
+        metric='squared_euclidean', postprocess='sqrt',
+        argtracked=False, parallelized=True, n_workers=4
+    )
+    shape = (50, 50, 50)
+    pos_a = (25, 10, 10)
+    pos_b = (25, 40, 40)
+    va, vb = create_simple_testvolume(shape, pos_a, pos_b)
+
+    result = hausdorff.compute(va, vb)
+
+    fig, axes = plt.subplots(ncols=2)
+    fig.suptitle(f'HD = {result}')
+    axes = axes.flat
+    ax = axes[0]
+    ax.imshow(va[25, ...])
+    ax = axes[1]
+    ax.imshow(vb[25, ...])
+    plt.show()
+    
+

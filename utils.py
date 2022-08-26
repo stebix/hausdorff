@@ -1,10 +1,7 @@
-import numpy as np
-
-from typing import Tuple, Dict, List, Optional
-
 """
 Various utility functions for the `hausdorff` package.
 """
+import numpy as np
 
 
 def is_binary(arr: np.array) -> bool:
@@ -41,4 +38,8 @@ def idshape(*arrays: np.ndarray) -> bool:
     else:
         return True
 
+
+def noop(x: np.ndarray):
+    """No-op dummy function."""
+    return x
 

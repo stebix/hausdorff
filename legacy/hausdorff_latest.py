@@ -1,3 +1,4 @@
+from functools import partial
 import time
 import numpy as np
 import numba as nb
@@ -10,10 +11,18 @@ import dirhd
 
 @nb.jit(nopython=True, nogil=True, fastmath=True)
 def squared_euclidean(a: np.ndarray, b: np.ndarray):
+    dsquared = 0
+    for i in range(3):
+        dsquared += (a[i] - b[i]) ** 2
+    return dsquared
+
+
+@nb.jit(nopython=True, nogil=True, fastmath=True)
+def euclidean(a: np.ndarray, b: np.ndarray):
     d = 0
     for i in range(3):
         d += (a[i] - b[i]) ** 2
-    return d
+    return np.sqrt(d)
         
 
 @nb.jit(nopython=True, fastmath=True, nogil=True)
@@ -50,6 +59,22 @@ def directed_hausdorff_distances_separate(X: np.ndarray, Y: np.ndarray) -> np.nd
         mindist = np.inf
         for j in range(card_Y):
             dist = squared_euclidean(X[i], Y[j])
+            if dist < mindist:
+                mindist = dist
+        squared_distances[i] = mindist
+    return squared_distances
+
+
+@nb.jit(nopython=True, fastmath=True)
+def directed_hausdorff_distances_varmet(X: np.ndarray, Y: np.ndarray, *,
+                                        metric: callable) -> np.ndarray:
+    card_X = X.shape[0]
+    card_Y = Y.shape[0]
+    squared_distances = np.zeros(card_X)
+    for i in range(card_X):
+        mindist = np.inf
+        for j in range(card_Y):
+            dist = metric(X[i], Y[j])
             if dist < mindist:
                 mindist = dist
         squared_distances[i] = mindist
@@ -117,6 +142,8 @@ if __name__ == '__main__':
     HD_funcs = {
         'standard' : directed_hausdorff_distances,
         'separate metric function' : directed_hausdorff_distances_separate,
+        'separate eucSq metric function' : directed_hausdorff_distances_varmet,
+        'separate euc metric function' : directed_hausdorff_distances_separate,
         'separate +  argtracked metric function' : directed_hausdorff_distances_separate_argtracked,
         'integer specialized' : directed_hausdorff_distances_integer,
         'cython' : dirhd.directed_hausdorff_distances_integer
@@ -127,7 +154,11 @@ if __name__ == '__main__':
     # warmup via JIT compilation, careful with matching data types
     warmup_X = np.random.randint(0, 100, size=(5, 3), dtype=DTYPE)
     warmup_Y = np.random.randint(0, 100, size=(5, 3), dtype=DTYPE)
-    for func in HD_funcs.values():
+    for name, func in HD_funcs.items():
+        if name == 'separate eucSq metric function':
+            func = partial(func, metric=squared_euclidean)
+        elif name == 'separate eucSq metric function':
+            func = partial(func, metric=euclidean)
         _ = func(warmup_X, warmup_Y)
 
 
@@ -143,6 +174,11 @@ if __name__ == '__main__':
     test_result = None
 
     for name, func in HD_funcs.items():
+
+        if name == 'separate eucSq metric function':
+            func = partial(func, metric=squared_euclidean)
+        elif name == 'separate eucSq metric function':
+            func = partial(func, metric=euclidean)
     
         for _ in range(N_REPEATS):
             start = time.perf_counter()

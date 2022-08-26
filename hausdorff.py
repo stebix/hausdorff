@@ -1,293 +1,376 @@
-"""
-Raw Hausdorff distance and metric calculation implementation for point sets `X` and `Y`.
-"""
-
-import multiprocessing as mp
+import importlib
 import numpy as np
-import numba as nb
 
-from typing import List, Tuple, Dict, Optional, Callable, Union, Sequence
+from functools import partial
+from typing import Callable, Optional, Union, Tuple
+from collections import namedtuple
+
+from hausdorff_functional import (directed_hausdorff_distances,
+                             directed_hausdorff_distances_argtracked)
+from parallel import parallel_compute_hausdorff, hardware_check
+from utils import noop
+
+from intersectiontools import argwhere, mask_unique_true, postpad
+
+TrackedDistances = namedtuple(typename='TrackedDistances',
+                              field_names=('distances', 'indices'))
+
+POSTPROCESSING_FN = {
+    'sqrt' : np.sqrt,
+    'exp' : np.exp,
+    'log' : np.log,
+    'none' : noop
+}
+
+REDUCTION_FN = {
+    'none' : noop,
+    'max' : np.max,
+    'canonical' : np.max,
+    'average' : np.mean,
+    'quantile' : np.quantile
+}
 
 
-@nb.jit(nopython=True, fastmath=True, parallel=True)
-def pairwise_distances(X: np.ndarray, Y: np.ndarray, *,
-                       metric: Callable) -> np.ndarray:
-    
-    card_X = X.shape[0]
-    card_Y = Y.shape[0]
-    distances = np.zeros(card_X*card_Y, dtype=np.float32)
-    for i in range(card_X):
-        for j in range(card_Y):
-            dist = metric(X[i, ...], Y[j, ...])
-            distances[i*j] = dist
-    return distances
+def get_postprocessing_function(alias: str) -> callable:
+    """Return callable postprocessing function from string alias"""
+    try:
+        fn = POSTPROCESSING_FN[alias]
+    except KeyError as e:
+        message = f'Invalid postprocessing function alias "{alias}"'
+        raise ValueError(message) from e
+    return fn
 
+def get_reduction_function(alias: str) -> callable:
+    try:
+        fn = REDUCTION_FN[alias]
+    except KeyError as e:
+        message = f'Invalid reduction function alias: "{alias}"'
+        raise ValueError(message) from e
+    return fn
 
-@nb.jit(nopython=True, fastmath=True, parallel=False)
-def dir_hd_distcs(X: np.ndarray, Y: np.ndarray, *, metric: Callable) -> np.ndarray:
+def get_metric(name: str) -> Callable:
+    metric_module = importlib.import_module(name='metrics')
+    try:
+        metric = getattr(metric_module, name)
+    except AttributeError:
+        raise RuntimeError(f'Cannot retrieve metric with name "{name}"')
+    return metric
+
+def argtracked_max_reduction(distances: np.ndarray) -> int:
+    return np.argmax(distances)
+
+def argtracked_noop_reduction(distances: np.ndarray) -> slice:
+    return np.s_[:]
+
+def core_hausdorff_function(metric: Union[str, callable],
+                            argtracked: bool) -> Callable:
     """
-    Compute the directed Hausdorff distances between the sets `X` and `Y`.
-    Return an array of distances:
-    For every element x € X, the minimum distance d_min = metric(x, y_min)
-    with y_min € Y is provided.
-    Hint: X and Y should be provided as positional arguments only.
+    Create the core Hausdorff computation function via insertion of the
+    desired metric `d(a,b)` and the argument-tracking setting.
 
     Parameters
     ----------
 
-    X: numpy.ndarray
-        First set for dirH(X, Y)
+    metric : str or callable
+        The metric used for the Hausdorff distance computation. Can be a string
+        indicating the metric function present in the `metrics.py` module
+        or a numba `@numba.jit(nopython=True)` decorated callable with the signature
+        `func(a,b)` for two vectors.
 
-    Y: numpy.ndarray
-        Second set for dirH(X, Y)
-    
-    metric: Callable
-        The metric function used to calculate
-        dist = metric(x, y) with x € X and y € Y.
-
-    Returns
-    -------
-
-    distances: numpy.ndarray
-        The 1D array of minimal distances with a length
-        of X.shape[0].
-    """
-    card_X = X.shape[0]
-    card_Y = Y.shape[0]
-    distances = np.zeros(card_X, dtype=np.float32)
-    for i in range(card_X):
-        mindist = np.inf
-        for j in range(card_Y):
-            dist = metric(X[i, ...], Y[j, ...])
-            if dist < mindist:
-                mindist = dist
-        distances[i] = mindist
-    return distances
-
-
-@nb.jit(nopython=True, fastmath=True)
-def dir_hd_dist(X: np.ndarray, Y: np.ndarray, *, metric: Callable) -> float:
-    """
-    Compute the directed Hausdorff distance.
-    Hint: X and Y should be provided as positional arguments only.
-
-    Parameters
-    ----------
-
-    X: numpy.ndarray
-        First set for dirH(X, Y)
-
-    Y: numpy.ndarray
-        Second set for dirH(X, Y)
-    
-    metric: Callable
-        The metric function used to calculate
-        dist = metric(x, y) with x € X and y € Y.
+    argtracked : bool
+        Flag to indicate wether the HD computation is performed with argument
+        tracking.
 
     Returns
     -------
 
-    hd_distance: float
-        The directed Hausdorff distance dH(X, Y).
+    hd_func : callable
+        The core Hausdorff distance computation function with the call signature
+        `hd_func(X, Y)` for two point sets X and Y.
     """
-    card_X = X.shape[0]
-    card_Y = Y.shape[0]
-    maxdist = 0.0
-    for i in range(card_X):
-        mindist = np.inf
-        for j in range(card_Y):
-            dist = metric(X[i, ...], Y[j, ...])
-            if dist < mindist:
-                mindist = dist
-        if maxdist < mindist:
-            maxdist = mindist
-    return maxdist
-
-
-
-@nb.jit(nopython=True, fastmath=True, parallel=False)
-def argtr_dir_hd_distcs(X: np.ndarray, Y: np.ndarray, *, metric: Callable) -> Tuple[np.ndarray]:
-    """
-    Computes the argument-tracked directed Hausdorff distances between `X` and `Y`.
-    This means that the distance and the
-    corresponding index of the element of `Y` that gives the minimal distance
-    is calculated:
-    dist_i = metric(x_i, y*_j)   where y*_j minimizes the distances over all y € Y.
-
-    Hint: X and Y should be provided as positional arguments only.
-
-
-    Parameters
-    ----------
-
-    X: numpy.ndarray
-        First set for dirH(X, Y)
-
-    Y: numpy.ndarray
-        Second set for dirH(X, Y)
-    
-    metric: Callable
-        The metric function used to calculate
-        dist = metric(x, y) with x € X and y € Y.
-
-    Returns
-    -------
-
-    (distances, indices): 2-tuple of numpy.ndarray
-        The tuple of distances and corresponding indices of elements
-        of Y that minimize the distance. 
-    """
-    card_X = X.shape[0]
-    card_Y = Y.shape[0]
-    distances = np.zeros((card_X), dtype=np.float32)
-    indices = np.full(card_X, np.nan, dtype=np.int32)
-    for i in range(card_X):
-        mindist = np.inf
-        minidx = np.nan
-        for j in range(card_Y):
-            dist = metric(X[i, ...], Y[j, ...])
-            if dist < mindist:
-                mindist = dist
-                minidx = j
-        distances[i] = mindist
-        indices[i] = minidx
-    assert np.all(~np.isnan(indices)), 'WTF'
-    return (distances, indices)
-
-
-
-@nb.jit(nopython=True, fastmath=True)
-def hd_distcs(X: np.ndarray, Y: np.ndarray, *, metric: Callable) -> np.ndarray:
-    """
-    Compute the Hausdorff distances between `X` and `Y` as well as the mirror
-    case `Y` and `X`.
-    Hint: X and Y should be provided as positional arguments only.
-
-    Parameters
-    ----------
-
-    X: numpy.ndarray
-        First set.
-
-    Y: numpy.ndarray
-        Second set.
-    
-    metric: Callable
-        The metric function used to calculate
-        dist = metric(x, y) with x € X and y € Y.
-    
-    Returns
-    -------
-
-    (hdists_XY, hdists_YX) : 2-tuple of np.ndarray
-        Tuple of both directed Hausdorff distances dH(X, Y)
-        and dH(Y, X). 
-    """
-    hdists_XY = dir_hd_distcs(X, Y, metric=metric)
-    hdists_YX = dir_hd_distcs(Y, X, metric=metric)
-    return (hdists_XY, hdists_YX)
-
-
-def hd_distcs_pll(X: np.ndarray, Y: np.ndarray, *, metric: Callable):
-    """
-    Parallelized Hausdorff distances calculation of (dH(X, Y), dH(Y, X))
-    distributed across two processes.
-    Hint: X and Y should be provided as positional arguments only.
-
-    Parameters
-    ----------
-
-    X: numpy.ndarray
-        First set.
-
-    Y: numpy.ndarray
-        Second set.
-    
-    metric: Callable
-        The metric function used to calculate
-        dist = metric(x, y) with x € X and y € Y.
-    
-    Returns
-    -------
-
-    (hdists_XY, hdists_YX) : 2-tuple of np.ndarray
-        Tuple of both directed Hausdorff distances dH(X, Y)
-        and dH(Y, X). 
-
-    """
-    queue = mp.Queue(3)
-    worker_XY = mp.Process(target=_worker,
-                           args=(dir_hd_distcs, (X, Y), {'metric' : metric}, queue, 0))
-    worker_YX = mp.Process(target=_worker,
-                           args=(dir_hd_distcs, (Y, X), {'metric' : metric}, queue, 1))
-
-    results = []
-
-    workers = [worker_XY, worker_YX]
-    for w in workers:
-        w.start()
-
-    # collect results from queue BEFORE joining to circumvent eternal .join()
-    # hang ... be aware that this loop runs forever if a worker fucks up
-    while len(results) < 2:
-        results.append(queue.get(block=True))
-
-    for w in workers:
-        w.join()
-    results.sort(key=lambda tpl : tpl[0])
-    return tuple(r[1] for r in results)
-
-
-def _worker(func: Callable, fargs: Tuple, fkwargs: dict, queue: mp.Queue, pos: int) -> None:
-    """
-    Worker template for multiprocessing implementation in `hd_distcs_pll`.
-    The callable `func` is evaluated with `fargs` and `fkwargs`, its results are placed in
-    the provided queue as a tuple with the `pos` integer as a canonical
-    ordering index.
-    """
-    result = func(*fargs, **fkwargs)
-    queue.put((pos, result))
-
-
-def avg_hd_dist(X: np.ndarray, Y: np.ndarray, *, metric: Callable, parallel=True) -> float:
-    """
-    Hint: X and Y should be provided as positional arguments only.
-    """
-    if parallel:
-        dists = hd_distcs_pll(X, Y, metric=metric)
+    if argtracked:
+        hd_func = directed_hausdorff_distances_argtracked
     else:
-        dists = hd_distcs(X, Y, metric=metric)
-    
-    # accumulate the mean of the directed Hausdorff distances
-    dir_mean_acc = 0.0
-    for dir_dists in dists:
-        dir_mean_acc += np.mean(dir_dists)
-    # average again
-    return dir_mean_acc / 2
-
-
-def hd_metric(X: np.ndarray, Y: np.ndarray, *, metric: Callable, parallel=True) -> float:
-    """
-    Compute the Hausdorff metric between the sets `X` and `Y`.
-    Hint: X and Y should be provided as positional arguments only.
-    """
-    if parallel:
-        return np.max(np.concatenate(hd_distcs_pll(X, Y, metric=metric), axis=0))
+        hd_func = directed_hausdorff_distances
+    if isinstance(metric, str):
+        metric_fn = get_metric(metric)
+    elif callable(metric):
+        metric_fn = metric
     else:
-        return np.max(np.concatenate(hd_distcs(X, Y, metric=metric), axis=0))
+        raise TypeError(f'metric argument must be str or callable, got {type(metric)}')
+    hd_func = partial(hd_func, metric=metric_fn)
+    return hd_func
 
 
-
-
-def percentile_hd_metric(X: np.ndarray, Y: np.ndarray, *, metric: Callable,
-                         q: Union[float, Sequence[float]],
-                         **kwargs) -> float:
+def split_result(result: np.ndarray, cast_indexarray: bool = True,
+                 dtype=np.int32) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """
-    Convenience function to compute q-th percentile of Hausdorff distances between
-    `X` and `Y`.
+    Split result of opaque Hausdorff computation function that may return a
+    1D array (default, non-argtracked min-max computation) or a 2D array
+    (specialized, argtracked min-max computation). The index array can be recast
+    to the indicated dtype.
     """
-    distances = np.concatenate(hd_distcs(X, Y, metric=metric), axis=0)
-    return np.percentile(distances, q=q, **kwargs)
+    if result.ndim == 1:
+        return (result, None)
+    elif result.ndim == 2:
+        distances, indices = result[:, 0], result[:, 1]
+        if cast_indexarray:
+            indices = indices.astype(dtype)
+        return (distances, indices)
+    else:
+        message = (f'expecting 1D (non-argtracked) or 2D (argtracked) result argument, '
+                   f'but got ndim = {result.ndim}')
+        raise ValueError(message)
 
 
+class _BaseHausdorff:
+    """
+    Interface to configure and then execute the Hausdorff distance computation.
+    """
+    repr_keys = set(('symmetric', 'reduction', 'remove_intersection',
+                     'metric', 'postprocess', 'parallelized',
+                     'n_workers'))
+    def __init__(self,
+                 reduction: Union[str, callable] = 'none',
+                 remove_intersection: bool = True,
+                 metric: str = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 argtracked: bool = False,
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None,
+                 ) -> None:
+        self.reduction = reduction
+        self.remove_intersection = remove_intersection
+        self.metric = metric
+        self.argtracked = argtracked
+        self.parallelized = parallelized
+        self.n_workers = n_workers
 
+        if self.parallelized:
+            assert n_workers, 'parallelization requires explicit setting of worker process count'
+            hardware_check(n_workers)
+
+        self.postprocess = postprocess
+
+
+    def _get_core_hausdorff_function(self) -> callable:
+        """
+        Get the basal Hausdorff computation function in dependence of the
+        desired settings.
+        """
+        return core_hausdorff_function(self.metric, self.argtracked)
+    
+    def _get_maybe_parallel_hausdorff_function(self) -> callable:
+        """
+        Get the potentially parallelized Hausdorff distance computation function.
+        """
+        core_hd_func = self._get_core_hausdorff_function()
+        if self.parallelized:
+            hd_func = partial(parallel_compute_hausdorff,
+                              n_workers=self.n_workers, compute_func=core_hd_func,
+                              argtracked=self.argtracked)
+        else:
+            hd_func = core_hd_func
+        return hd_func
+    
+    def get_compute_fn(self) -> Callable:
+        return self._get_maybe_parallel_hausdorff_function()
+    
+    def get_postprocessing_fn(self) -> Callable:
+        return get_postprocessing_function(self.postprocess)
+    
+    def get_reduction_fn(self) -> Callable:
+        if isinstance(self.reduction, str):
+            return get_reduction_function(self.reduction)
+        else:
+            return self.reduction
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> float:
+        raise NotImplementedError
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __repr__(self) -> str:
+        prefix = f'{self.__class__.__name__}('
+        core_info = ', '.join(
+            (f'{key}={self._wrap_strings(getattr(self, key))}' for key in self.repr_keys)
+        )
+        suffix = ')'
+        return ''.join((prefix, core_info, suffix))
+    
+    @staticmethod
+    def _wrap_strings(candidate):
+        if isinstance(candidate, str):
+            return ''.join(("'", candidate, "'"))
+        else:
+            return candidate
+
+
+class DirectedHausdorff(_BaseHausdorff):
+
+    def __init__(self,
+                 reduction: Union[str, callable] = 'none',
+                 remove_intersection: bool = True,
+                 metric: str = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None) -> None:
+        argtracked = False
+        super().__init__(reduction, remove_intersection, metric, postprocess,
+                         argtracked, parallelized, n_workers)
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> Union[np.ndarray, float]:
+        postprocess = self.get_postprocessing_fn()
+        compute_HD = self.get_compute_fn()
+        reduction = self.get_reduction_fn()
+        args = (X, Y)
+
+        intersection_count = 0
+        if self.remove_intersection:
+            (*args, intersection_count) = mask_unique_true(*args)
+        args = tuple(argwhere(array) for array in args)
+        distances = compute_HD(*args)
+        distances = postpad(distances, pad_width=intersection_count)
+        distances = postprocess(distances)
+        distances = reduction(distances)
+        return distances
+
+
+class ArgtrackedDirectedHausdorff(_BaseHausdorff):
+    reductions = ('none', 'max', 'canonical')
+    def __init__(self,
+                 reduction: str = 'none',
+                 remove_intersection: bool = True,
+                 metric: str = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None) -> None:
+        assert reduction in self.reductions, f'unsupported reduction: must be one of {self.reductions}'
+        argtracked = True
+        super().__init__(reduction, remove_intersection, metric, postprocess,
+                         argtracked, parallelized, n_workers)
+    
+    def get_reduction_fn(self) -> Callable:
+        if self.reduction == 'none':
+            return argtracked_noop_reduction
+        else:
+            return argtracked_max_reduction        
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> tuple:
+        postprocess = self.get_postprocessing_fn()
+        compute_HD = self.get_compute_fn()
+        reduction = self.get_reduction_fn()
+        args = (X, Y)
+
+        intersection_count = 0
+        if self.remove_intersection:
+            (*args, intersection_count) = mask_unique_true(*args)
+        args = tuple(argwhere(array) for array in args)
+        result = compute_HD(*args)
+        result = postpad(result, pad_width=intersection_count)
+        distances, indices = split_result(result, cast_indexarray=True, dtype=np.int32)
+        distances = postprocess(distances)
+        # select maximum index or full slice
+        maxindex_or_slice: Union[int, slice] = reduction(distances)
+
+        coordinates = (
+            args[0][maxindex_or_slice, :],
+            args[1][indices[maxindex_or_slice], :]
+        )
+
+        result = TrackedDistances(distances[maxindex_or_slice], coordinates)
+        return result
+
+
+class Hausdorff(_BaseHausdorff):
+
+    def __init__(self,
+                 reduction: Union[str, callable] = 'none',
+                 remove_intersection: bool = True,
+                 metric: str = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None) -> None:
+        argtracked = False
+        super().__init__(reduction, remove_intersection, metric, postprocess,
+                         argtracked, parallelized, n_workers)
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> Union[np.ndarray, float]:
+        arg_combs = [(X, Y), (Y, X)]
+        postprocess = self.get_postprocessing_fn()
+        compute_HD = self.get_compute_fn()
+        reduction = self.get_reduction_fn()
+        # generalized result containers
+        result_permutations = []
+        intersection_count = 0
+        for args in arg_combs:
+            if self.remove_intersection:
+                (*args, intersection_count) = mask_unique_true(*args)
+            args = tuple(argwhere(array) for array in args)
+            distances = compute_HD(*args)
+            distances = postpad(distances, pad_width=intersection_count)
+            distances = postprocess(distances)
+            distances = reduction(distances)
+            result_permutations.append(distances)
+        if self.reduction != 'none':
+            return np.max(result_permutations)
+        else:
+            return tuple(result_permutations)
+
+
+class ArgtrackedHausdorff(_BaseHausdorff):
+
+    def __init__(self,
+                 reduction: Union[str, callable] = 'none',
+                 remove_intersection: bool = True,
+                 metric: str = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None) -> None:
+        assert reduction in self.reductions, f'unsupported reduction: must be one of {self.reductions}'
+        argtracked = True
+        super().__init__(reduction, remove_intersection, metric, postprocess,
+                         argtracked, parallelized, n_workers)
+
+    def get_reduction_fn(self) -> Callable:
+        if self.reduction == 'none':
+            return argtracked_noop_reduction
+        else:
+            return argtracked_max_reduction    
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> Union[np.ndarray, float]:
+        arg_combs = [(X, Y), (Y, X)]
+        postprocess = self.get_postprocessing_fn()
+        compute_HD = self.get_compute_fn()
+        reduction = self.get_reduction_fn()
+        # generalized result containers
+        result_permutations = []
+        indices_permutations = []
+        intersection_count = 0
+        for args in arg_combs:
+            if self.remove_intersection:
+                (*args, intersection_count) = mask_unique_true(*args)
+            args = tuple(argwhere(array) for array in args)
+            result = compute_HD(*args)
+            result = postpad(*result, pad_width=intersection_count)
+            distances, indices = split_result(result, cast_indexarray=True, dtype=np.int32)
+            distances = postprocess(distances)
+            maxindex_or_slice: Union[int, slice] = reduction(distances)
+            result_permutations.append(distances[maxindex_or_slice])
+            indices_permutations.append(indices[maxindex_or_slice])
+        if self.reduction != 'none':
+            # find maximum values per permutation
+            maxindex = np.argmax(np.array(result_permutations))
+            return TrackedDistances(result_permutations[maxindex], indices_permutations[maxindex])
+        else:
+            unreduced_result = tuple(
+                TrackedDistances(dist_perm, idx_perm)
+                for dist_perm, idx_perm in zip(result_permutations, indices_permutations)
+            )
+            return unreduced_result
+
+
+if __name__ == '__main__':
+    hd = Hausdorff(symmetric=True)
+    print(hd)
