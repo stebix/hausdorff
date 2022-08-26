@@ -4,8 +4,6 @@ import numba  as nb
 from typing import Callable
 
 
-        
-
 @nb.jit(nopython=True, fastmath=True, nogil=True)
 def directed_hausdorff_distances(X: np.ndarray, Y: np.ndarray, *,
                                  metric: Callable) -> np.ndarray:

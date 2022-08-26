@@ -5,12 +5,12 @@ from functools import partial
 from typing import Callable, Optional, Union, Tuple
 from collections import namedtuple
 
-from hausdorff_functional import (directed_hausdorff_distances,
-                             directed_hausdorff_distances_argtracked)
-from parallel import parallel_compute_hausdorff, hardware_check
-from utils import noop
+from src.hausdorff_functional import (directed_hausdorff_distances,
+                                      directed_hausdorff_distances_argtracked)
+from src.parallel import parallel_compute_hausdorff, hardware_check
+from src.utils import noop
+from src.intersectiontools import argwhere, mask_unique_true, postpad
 
-from intersectiontools import argwhere, mask_unique_true, postpad
 
 TrackedDistances = namedtuple(typename='TrackedDistances',
                               field_names=('distances', 'indices'))
