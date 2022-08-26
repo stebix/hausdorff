@@ -7,6 +7,10 @@
 *.h5
 *.hdf
 
+# Folders
+build/
+legacy/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
