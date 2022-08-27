@@ -26,8 +26,7 @@ REDUCTION_FN = {
     'none' : noop,
     'max' : np.max,
     'canonical' : np.max,
-    'average' : np.mean,
-    'quantile' : np.quantile
+    'average' : np.mean
 }
 
 
