@@ -5,11 +5,11 @@ from functools import partial
 from typing import Callable, Optional, Union, Tuple
 from collections import namedtuple
 
-from src.hausdorff_functional import (directed_hausdorff_distances,
-                                      directed_hausdorff_distances_argtracked)
-from src.parallel import parallel_compute_hausdorff, hardware_check
-from src.utils import noop
-from src.intersectiontools import argwhere, mask_unique_true, postpad
+from hausdorff.functional import (directed_hausdorff_distances,
+                                  directed_hausdorff_distances_argtracked)
+from hausdorff.parallel import parallel_compute_hausdorff, hardware_check
+from hausdorff.utils import noop
+from hausdorff.intersectiontools import argwhere, mask_unique_true, postpad
 
 
 TrackedDistances = namedtuple(typename='TrackedDistances',
@@ -48,7 +48,7 @@ def get_reduction_function(alias: str) -> callable:
     return fn
 
 def get_metric(name: str) -> Callable:
-    metric_module = importlib.import_module(name='metrics')
+    metric_module = importlib.import_module(name='hausdorff.metrics')
     try:
         metric = getattr(metric_module, name)
     except AttributeError:
@@ -132,7 +132,7 @@ class _BaseHausdorff:
     def __init__(self,
                  reduction: Union[str, callable] = 'none',
                  remove_intersection: bool = True,
-                 metric: str = 'squared_euclidean',
+                 metric: Union[str, Callable] = 'squared_euclidean',
                  postprocess: str = 'sqrt',
                  argtracked: bool = False,
                  parallelized: bool = False,
@@ -200,6 +200,11 @@ class _BaseHausdorff:
     
     @staticmethod
     def _wrap_strings(candidate):
+        """
+        Wrap any string-type argument with pre- and post single quotes,
+        i.e. input is transformed like: foobar -> 'foobar'
+        Arguments of any other type are returned unmodified.
+        """
         if isinstance(candidate, str):
             return ''.join(("'", candidate, "'"))
         else:
@@ -207,11 +212,35 @@ class _BaseHausdorff:
 
 
 class DirectedHausdorff(_BaseHausdorff):
+    """
+    Compute the directed Hausdorff distance between the first volume `X` and
+    the second volume `Y`.
+    The computation algorithm can be modified via the class initializer arguments.
+    The computation is performed via the `compute(X, Y)` method.
+
+    Parameters
+    ----------
+
+    reduction : string or callable, optional
+        The reduction is applied to the array of minimal distances
+        for every point in `X` to any point in `Y`.
+        Use 'none' to get the full array.
+        Use 'max' to get the canonical directed Hausdorff distance.
+        Use 'average' to get the average directed Hausdorff distance.
+        Alternatively, any supplied callable is applied to the array
+        of minimal distances.
+        Defaults to 'none'.
+
+    remove_intersection : bool, optional
+        Exclude intersecting points in `X` and `Y` to reduce
+        the computational load.
+        Defaults to True.
+    """
 
     def __init__(self,
                  reduction: Union[str, callable] = 'none',
                  remove_intersection: bool = True,
-                 metric: str = 'squared_euclidean',
+                 metric: Union[str, Callable] = 'squared_euclidean',
                  postprocess: str = 'sqrt',
                  parallelized: bool = False,
                  n_workers: Optional[int] = None) -> None:
@@ -241,7 +270,7 @@ class ArgtrackedDirectedHausdorff(_BaseHausdorff):
     def __init__(self,
                  reduction: str = 'none',
                  remove_intersection: bool = True,
-                 metric: str = 'squared_euclidean',
+                 metric: Union[str, Callable] = 'squared_euclidean',
                  postprocess: str = 'sqrt',
                  parallelized: bool = False,
                  n_workers: Optional[int] = None) -> None:
@@ -287,7 +316,7 @@ class Hausdorff(_BaseHausdorff):
     def __init__(self,
                  reduction: Union[str, callable] = 'none',
                  remove_intersection: bool = True,
-                 metric: str = 'squared_euclidean',
+                 metric: Union[str, Callable] = 'squared_euclidean',
                  postprocess: str = 'sqrt',
                  parallelized: bool = False,
                  n_workers: Optional[int] = None) -> None:
@@ -323,7 +352,7 @@ class ArgtrackedHausdorff(_BaseHausdorff):
     def __init__(self,
                  reduction: Union[str, callable] = 'none',
                  remove_intersection: bool = True,
-                 metric: str = 'squared_euclidean',
+                 metric: Union[str, Callable] = 'squared_euclidean',
                  postprocess: str = 'sqrt',
                  parallelized: bool = False,
                  n_workers: Optional[int] = None) -> None:

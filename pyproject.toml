@@ -1,0 +1,21 @@
+[project]
+
+name = "hausdorff"
+version = "0.0.1"
+description = "Compute the Hausdorff distance."
+readme = "README.md"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy>=1.20.0",
+    "numba>=0.50.0",
+    "cupy>=9.3.0"
+]
+
+
+[project.optional-dependencies]
+
+dev = ["pytest"]
+
+
+[project.urls]
+Homepage = "https://github.com/stebix/hausdorff"
