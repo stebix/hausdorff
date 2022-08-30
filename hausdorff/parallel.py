@@ -96,8 +96,7 @@ def parallel_compute_hausdorff(X: np.ndarray, Y: np.ndarray, n_workers: int, *,
 
 
 def parallel_compute_reduction(dir_XY: np.ndarray, dir_YX: np.ndarray,
-                               reduction_func: callable,
-                               argtracked: bool = False) -> Tuple[np.ndarray]:
+                               reduction_func: callable) -> Tuple[np.ndarray]:
     """
     Compute the indicated reduction in parallel for the two directed Hausdorff
     distance results dHD(X,Y) and dHD(Y,X)
@@ -105,16 +104,12 @@ def parallel_compute_reduction(dir_XY: np.ndarray, dir_YX: np.ndarray,
     # if directed Hausdorff distance is argtracked we have a 2D array where the
     # first element of a row is the minimal distance and the second element is
     # the corresponding minimal distance element index of the secondary array
-    if argtracked:
-        slc = np.s_[:, 0]
-    else:
-        slc = np.s_[:]
     arrays = (dir_XY, dir_YX)
     n_workers = 2
     computation_results = [None, None]
     with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
         future_to_index = {
-            executor.submit(reduction_func(arrays[i][slc])) : i for i in range(2)
+            executor.submit(reduction_func, arrays[i]) : i for i in range(2)
         }
         for future in concurrent.futures.as_completed(future_to_index):
             idx = future_to_index[future]

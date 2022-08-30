@@ -1,14 +1,15 @@
 import importlib
+import dataclasses
 import numpy as np
 
 from functools import partial
-from typing import Callable, Optional, Union, Tuple
+from typing import Callable, Optional, Sequence, Union, Tuple, Dict, List
 from collections import namedtuple
 
 from hausdorff.functional import (directed_hausdorff_distances,
                                   directed_hausdorff_distances_argtracked)
-from hausdorff.parallel import parallel_compute_hausdorff, hardware_check
-from hausdorff.utils import noop
+from hausdorff.parallel import parallel_compute_hausdorff, hardware_check, parallel_compute_reduction
+from hausdorff.utils import all_isinstance, noop, dict_as_str_repr, unique_types
 from hausdorff.intersectiontools import argwhere, mask_unique_true, postpad
 
 
@@ -26,7 +27,10 @@ REDUCTION_FN = {
     'none' : noop,
     'max' : np.max,
     'canonical' : np.max,
-    'average' : np.mean
+    'average' : np.mean,
+    'mean' : np.mean,
+    'quantile' : np.quantile,
+    'median' : np.median
 }
 
 
@@ -151,6 +155,13 @@ class _BaseHausdorff:
 
         self.postprocess = postprocess
 
+    def _get_core_attr_dict(self) -> dict:
+        """
+        Assemble a dictionary containing core attribute names and values.
+        The attributes deemed as "core" are specified in the `repr_keys`
+        class variable. 
+        """
+        return {key : getattr(self, key) for key in self.repr_keys}
 
     def _get_core_hausdorff_function(self) -> callable:
         """
@@ -312,7 +323,7 @@ class ArgtrackedDirectedHausdorff(_BaseHausdorff):
 
 
 class Hausdorff(_BaseHausdorff):
-
+    """Compute the canonical, symmetric Hausdorff distance."""
     def __init__(self,
                  reduction: Union[str, callable] = 'none',
                  remove_intersection: bool = True,
@@ -397,3 +408,174 @@ class ArgtrackedHausdorff(_BaseHausdorff):
                 for dist_perm, idx_perm in zip(result_permutations, indices_permutations)
             )
             return unreduced_result
+
+
+
+@dataclasses.dataclass
+class ReductionSpec:
+    """Specify a reduction function via its string name and a kwarg dict."""
+    name: str
+    kwargs: Dict = dataclasses.field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return f"({self.name}, {self.kwargs})"
+    
+    def asdict(self) -> dict:
+        """Return instance as dictionary."""
+        return {'name' : self.name, 'kwargs' : self.kwargs}
+    
+    @classmethod
+    def from_dict(cls, dictionary: dict) -> 'ReductionSpec':
+        """Initialize instance from a flat dictionary."""
+        name = dictionary.pop('name')
+        return cls(name=name, kwargs=dictionary)
+
+
+class MultireductionHausdorff:
+    """
+    Efficiently computes symmetric/canonical Hausdorff distance with a number
+    of reductions. 
+
+    Parameters
+    ----------
+
+    reduction_specs : Sequence of dictionary or ReductionSpec
+        Specify the multiple reduction functions via a sequence
+        of dictionaries or ReductionSpec objects.
+
+    remove_intersection : bool, optional
+        Exclude matching or intersecting points (that would yield zero
+        distance in the distance matrix) to mitigate compute load.
+        Defaults to True.
+
+    metric: str or callable, optional
+        The desired metric to compute point to point distance.
+        Can be a string name/alias or a `@numba.jit(nopython=True)`
+        decorated function.
+        Defaults to 'squared_euclidean'
+    
+    postprocess : str, optional
+        Element-wise postprocessing function applied to the distance
+        matrix. Select the operation via a string alias/name.
+        Typically used in conjunction with the metric selection
+        to mitigate computational load.
+        Defaults to 'sqrt'.
+    
+    parallelized : bool, optional
+        Toggle parallelization at Hausdorff distance matrix
+        computation.
+        Defaults to False.
+    
+    n_workers : int, optional
+        Set the maximum worker process count. Only utilized for
+        `parallelized=True`.
+        Defaults to None.
+
+    parallelized_reduction : bool, optional
+        Toggle parallelized reduction of both directed Hausdorff
+        distance matrix permutations.
+        Defaults to False.
+    """
+    def __init__(self,
+                 reduction_specs: Sequence[Union[Dict, ReductionSpec]],
+                 remove_intersection: bool = True,
+                 metric: Union[str, Callable] = 'squared_euclidean',
+                 postprocess: str = 'sqrt',
+                 parallelized: bool = False,
+                 n_workers: Optional[int] = None,
+                 parallelized_reduction: bool = False) -> None:
+
+        reduction = 'none'
+        self.base_hausdorff = Hausdorff(reduction, remove_intersection,
+                                        metric, postprocess,
+                                        parallelized, n_workers)
+        self.parallelized_reduction = parallelized_reduction
+        self.reduction_specs = self.initialize_reduction_specs(reduction_specs)
+        self.reductions = self.create_reduction_functions(self.reduction_specs)
+    
+    @staticmethod
+    def initialize_reduction_specs(reduction_specs: Sequence[Union[dict, ReductionSpec]]) -> List[ReductionSpec]:
+        """
+        Check type consistency of argument sequence and conditionally create
+        a list of ReductionSpec instances if a sequence of dictionaries is
+        provided.
+        """
+        if all_isinstance(reduction_specs, ReductionSpec):
+            return reduction_specs
+        elif all_isinstance(reduction_specs, dict):
+            return [ReductionSpec.from_dict(elem_dict) for elem_dict in reduction_specs]
+        else:
+            message = (f'reduction_spec sequence must be type-homogenous with either {type(dict)} '
+                       f'or {type(ReductionSpec)}. Error due to sequence containing '
+                       f'multiple types: {unique_types(reduction_specs)}')
+            raise TypeError(message)
+
+    @staticmethod
+    def create_reduction_functions(reduction_specs: Sequence[ReductionSpec]) -> List[Callable]:
+        """Create reduction callable functions from sequence of ReductionSpec instances."""
+        reductions = []
+        for reduction_spec in reduction_specs:
+            fn_reference = get_reduction_function(reduction_spec.name)
+            # partial to bind kwargs such that func(array) is guaranteed to work
+            func = partial(fn_reference, **reduction_spec.kwargs)
+            reductions.append(func)
+        return reductions
+    
+    def compute_reduction(self,
+                          permutation_A: np.ndarray, permutation_B: np.ndarray,
+                          func: Callable) -> float:
+        """
+        Compute the reduction for the two directed Hausdorff distance permutations.
+        The implementation is chosen upon the desired parallelization behaviour.
+        """
+        # TODO: Typical reduction ufuncs probably release the GIL anyway such that the
+        # process pool overhead kills any gains at typical permutation array
+        # sizes. Confirming and optimizing this requires more in-depth knowledge of numpy 
+        # parallelism though.
+        if self.parallelized_reduction:
+            result = parallel_compute_reduction(permutation_A, permutation_B, func)
+        else:
+            result_A = func(permutation_A)
+            result_B = func(permutation_B)
+            result = (result_A, result_B)
+        return np.max(result)
+
+    def compute(self, X: np.ndarray, Y: np.ndarray) -> List[Dict]:
+        results = []
+        dirHD_XY, dirHD_YX = self.base_hausdorff.compute(X, Y)
+        for reduction_func, reduction_spec in zip(self.reductions, self.reduction_specs):
+            value = self.compute_reduction(dirHD_XY, dirHD_YX, reduction_func)
+            # merge computation result dict with reduction information dict
+            reduction_result = {**reduction_spec.asdict(), **{'value' : value}}
+            results.append(reduction_result)
+        return results
+    
+    def _reduction_specs_str(self, style: str = 'str') -> str:
+        if style == 'str':
+            center = ', '.join((str(s) for s in self.reduction_specs))
+        elif style == 'repr':
+            center = ', '.join((repr(s) for s in self.reduction_specs))
+        else:
+            raise ValueError(f'invalid style argument "{style}" must be "str" or "repr"')
+        return ''.join(('[', center, ']'))
+    
+    def _core_kwarg_str_repr(self) -> str:
+        attrdict = self.base_hausdorff._get_core_attr_dict()
+        # in the context of this class, the reduction of the basal Hausdorff
+        # distance computation object is meaningless
+        attrdict.pop('reduction')
+        core = dict_as_str_repr(attrdict)
+        return core
+    
+    def _as_string(self, reduction_specs_string_style: str) -> str:
+        prefix = ''.join((self.__class__.__name__, '('))
+        core = (f'reduction_specs={self._reduction_specs_str(style=reduction_specs_string_style)}, '
+                f'{self._core_kwarg_str_repr()}, parallelized_reduction='
+                f'{self.parallelized_reduction}')
+        return ''.join((prefix, core, ')'))
+    
+    def __str__(self) -> str:
+        return self._as_string(reduction_specs_string_style='str')
+    
+    def __repr__(self) -> str:
+        return self._as_string(reduction_specs_string_style='repr')

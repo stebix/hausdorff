@@ -3,6 +3,41 @@ Various utility functions for the `hausdorff` package.
 """
 import numpy as np
 
+def all_isinstance(sequence, class_or_tuple) -> bool:
+    """
+    Check whether all elements of a sequence are instances of
+    the given class or tuple of classes.
+    """
+    return all(isinstance(elem, class_or_tuple) for elem in sequence)
+
+def unique_types(sequence) -> set:
+    """Get the set of types of the objects present in the sequence."""
+    return set(type(element) for element in sequence)
+
+def wrap_strings(candidate, wrap_char="'"):
+    """
+    If candidate is a string, wrap it pre and post with the wrap char.
+    Other types are returned unmodified.
+    """
+    if isinstance(candidate, str):
+        return ''.join((wrap_char, candidate, wrap_char))
+    return candidate
+
+
+def dict_as_str_repr(dictionary) -> str:
+    """
+    Represent dictionary as a single comma-separated string. String values
+    are automatically enclosed in single quotes. For a dictionary
+    `{key_1 : value_1, key_2 : value_2, key_3 : string_value_3}` this
+    yields the following result:
+    "key_1=value_1, key_2=value_2, key_3='string_value_3'"
+    """
+    key, value = dictionary.popitem()
+    core = f'{key}={wrap_strings(value)}'
+    for key, value in dictionary.items():
+        core = ', '.join((core, f'{key}={wrap_strings(value)}'))
+    return core
+
 
 def is_binary(arr: np.array) -> bool:
     """
