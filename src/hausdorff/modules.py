@@ -256,8 +256,10 @@ class DirectedHausdorff(_BaseHausdorff):
                  parallelized: bool = False,
                  n_workers: Optional[int] = None) -> None:
         argtracked = False
-        super().__init__(reduction, remove_intersection, metric, postprocess,
-                         argtracked, parallelized, n_workers)
+        super().__init__(
+            reduction, remove_intersection, metric, postprocess,
+            argtracked, parallelized, n_workers
+        )
 
     def compute(self, X: np.ndarray, Y: np.ndarray) -> Union[np.ndarray, float]:
         postprocess = self.get_postprocessing_fn()
