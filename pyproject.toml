@@ -1,10 +1,31 @@
-[project]
+# build and installation instructions for woodnet
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
+[project]
 name = "hausdorff"
 version = "0.1.2"
-description = "Compute the Hausdorff distance."
+authors = [
+  { name="Jannik Stebani", email="jannik.stebani@uni-wuerzburg.de" },
+]
+description = "Compute the Hausdorff distance for numpy and cupy arrays."
 readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache 2.0 License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta"
+]
 license = { file = "LICENSE" }
+keywords = [
+    "deep learning", "wood science", "volumetric", "classification",
+    "image processing", "machine learning", "data processing"
+]
 dependencies = [
     "numpy>=1.20.0",
     "numba>=0.50.0",
@@ -12,9 +33,7 @@ dependencies = [
     "scikit-image",
 ]
 
-
 [project.optional-dependencies]
-
 dev = ["pytest", "matplotlib"]
 
 
