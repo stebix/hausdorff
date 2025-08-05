@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import matplotlib.pyplot as plt
 
-from src.hausdorff import Hausdorff, DirectedHausdorff
-from src.volumehelpers import create_overlapping_cubes, create_simple_testvolume
+from hausdorff import Hausdorff, DirectedHausdorff
+from hausdorff.volumehelpers import create_overlapping_cubes, create_simple_testvolume
 
 
 class Test_DirectedHausdorff:

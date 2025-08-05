@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pytest
 
-from src.intersectiontools import mask_unique_true, postpad
-from src.volumehelpers import create_overlapping_cubes
+from hausdorff.intersectiontools import mask_unique_true, postpad
+from hausdorff.volumehelpers import create_overlapping_cubes
 
 
 def create_multiplot(ncols: int, nrows: int = 1) -> tuple:
