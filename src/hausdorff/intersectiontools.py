@@ -3,11 +3,22 @@ Provide tools to perform intersection-removal related operation before
 the Hausdorff metric computation to reduce computational load.
 """
 import numpy as np
-import cupy as cp
-
 from typing import Tuple, Union, Sequence
 
-Array = Union[np.ndarray, cp.ndarray]
+try:
+    import cupy as cp
+    HAS_CUPY = True
+    Array = Union[np.ndarray, cp.ndarray]
+except ImportError:
+    cp = None
+    HAS_CUPY = False
+    Array = np.ndarray
+
+def get_array_module(*arrays):
+    """Get the appropriate array module (numpy or cupy) for the given arrays."""
+    if HAS_CUPY:
+        return cp.get_array_module(*arrays)
+    return np
 
 def all_ndim(*arrays, ndim: int) -> bool:
     """Check that all arrays are of given ndim."""
@@ -15,7 +26,7 @@ def all_ndim(*arrays, ndim: int) -> bool:
 
 def argwhere(array: Array) -> Array:
     """Array-module agnostic argwhere"""
-    xp = cp.get_array_module(array)
+    xp = get_array_module(array)
     return xp.argwhere(array)
 
 def squeeze_singleton(arrays: Sequence[Array]) -> Union[Array, Tuple[Array]]:
@@ -35,7 +46,7 @@ def postpad(*arrays: Array, pad_width: int, squeeze: bool = True) -> Array:
             return squeeze_singleton(arrays)
         else:
             return arrays
-    xp = cp.get_array_module(*arrays)
+    xp = get_array_module(*arrays)
     if all_ndim(*arrays, ndim=2):
         pad_width = ((0, pad_width), (0, 0))
     elif all_ndim(*arrays, ndim=1):
@@ -77,7 +88,7 @@ def mask_unique_true(array_a: Array, array_b: Array,
     intersection_count : int, optional
         The number of elements in the intersection.
     """
-    xp = cp.get_array_module(array_a, array_b)
+    xp = get_array_module(array_a, array_b)
     intersection = xp.logical_and(array_a, array_b)
     # Avoid modifying supplied array object.
     array_a = array_a.copy()
@@ -109,7 +120,7 @@ def compute_unique_points(array_a: Array, array_b: Array) -> Array:
     array_b : Array
         The second point set array of (M x D) dimensionality. 
     """
-    xp = cp.get_array_module(array_a, array_b)
+    xp = get_array_module(array_a, array_b)
     concat_set = xp.concatenate((array_a, array_b), axis=0)
     return xp.unique(concat_set, axis=0)
 
