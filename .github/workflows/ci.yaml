@@ -1,0 +1,46 @@
+name: hausdorff package CI
+
+on: [push]
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+
+  test-linux-uv:
+    name: job-uv-(${{ matrix.python-version }}::${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run tests
+        run: uv run pytest
+
+
+  lint:
+    name: job-lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pyversion: ["py311", "py312", "py313"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v2
+        with:
+          args: "check . --target-version ${{ matrix.pyversion }}"
