@@ -2,17 +2,20 @@
 Provide tools to perform intersection-removal related operation before
 the Hausdorff metric computation to reduce computational load.
 """
+from typing import Tuple, Union, Sequence, TypeAlias
+
 import numpy as np
-from typing import Tuple, Union, Sequence
+
+from numpy.typing import NDArray
 
 try:
     import cupy as cp
     HAS_CUPY = True
-    Array = Union[np.ndarray, cp.ndarray]
+    Array: TypeAlias = Union[NDArray, cp.ndarray]
 except ImportError:
     cp = None
     HAS_CUPY = False
-    Array = np.ndarray
+    Array: TypeAlias = NDArray
 
 def get_array_module(*arrays):
     """Get the appropriate array module (numpy or cupy) for the given arrays."""
