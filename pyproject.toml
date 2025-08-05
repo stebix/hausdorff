@@ -36,6 +36,10 @@ dependencies = [
 dev = ["pytest", "matplotlib"]
 cuda = ["cupy>=9.3.0"]
 
-
 [project.urls]
 Homepage = "https://github.com/stebix/hausdorff"
+Issues = "https://github.com/stebix/hausdorff/issues"
+
+[tool.ruff]
+line-length = 99
+indent-width = 4
