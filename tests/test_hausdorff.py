@@ -14,7 +14,7 @@ class Test_DirectedHausdorff:
         hausdorff = DirectedHausdorff(
             reduction='canonical', remove_intersection=False,
             metric=metric, postprocess=postprocess,
-            argtracked=False, parallelized=parallelized, n_workers=n_workers
+            parallelized=parallelized, n_workers=n_workers
         )
         shape = (50, 50, 50)
         pos_a = (25, 10, 10)
@@ -35,7 +35,7 @@ class Test_Hausdorff:
         hausdorff = Hausdorff(
             reduction='average', remove_intersection=remove_intersection,
             metric='euclidean', postprocess='none',
-            argtracked=False, parallelized=False, n_workers=0
+            parallelized=False, n_workers=0
         )
         va, vb = create_overlapping_cubes()
         result = hausdorff.compute(va, vb)
@@ -74,7 +74,7 @@ def test():
     hausdorff = Hausdorff(
         reduction='canonical', remove_intersection=False,
         metric='squared_euclidean', postprocess='sqrt',
-        argtracked=False, parallelized=True, n_workers=4
+        parallelized=True, n_workers=4
     )
     shape = (50, 50, 50)
     pos_a = (25, 10, 10)
