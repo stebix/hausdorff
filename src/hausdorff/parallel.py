@@ -88,7 +88,7 @@ def parallel_compute_hausdorff(X: np.ndarray, Y: np.ndarray, n_workers: int, *,
             try:
                 subset_results = future.result()
             except Exception as exc:
-                logger.exception(f'computation for slice {slc} failed!')
+                logger.exception(f'computation for slice {slc} failed!', exc_info=exc)
             else:
                 computation_results[slc] = subset_results
     return computation_results
@@ -116,7 +116,7 @@ def parallel_compute_reduction(dir_XY: np.ndarray, dir_YX: np.ndarray,
             try:
                 reduction_result = future.result()
             except Exception as exc:
-                logger.exception(f'computation for index {idx} failed!')
+                logger.exception(f'computation for index {idx} failed!', exc_info=exc)
             else:
                 computation_results[idx] = reduction_result
     return tuple(computation_results)
