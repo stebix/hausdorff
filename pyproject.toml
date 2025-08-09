@@ -17,11 +17,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: OS Independent",
     "Development Status :: 4 - Beta"
 ]
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = [
     "deep learning", "wood science", "volumetric", "classification",
     "image processing", "machine learning", "data processing"
@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "matplotlib"]
+dev = ["pytest", "matplotlib", "ruff"]
 cuda = ["cupy>=9.3.0"]
 
 [project.urls]
